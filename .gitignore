@@ -1,4 +1,6 @@
 # Gradle files
+bot_data.db
+.env
 .gradle/
 build/
 .kotlin/
