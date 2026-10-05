@@ -886,7 +886,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
             json_file = io.BytesIO(json_string.encode('utf-8'))
             safe_json_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
-            await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
+            await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON...</ b>", parse_mode="HTML")
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
         # 📄 2. DRAW PRINTABLE HINDI PDF (FPDF2 ADVANCED LOGIC)
@@ -901,16 +901,13 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 pdf.set_auto_page_break(auto=True, margin=15)
                 pdf.add_page()
                 
-                # 🔥 CRITICAL FIX 1: मात्राओं को टूटने से बचाने के लिए Text Shaping ऑन करें
+                # ✅ FIXED: मात्राओं को जोड़ने के लिए टेक्स्ट शेपिंग ऑन रखी गई है
                 pdf.set_text_shaping(True)
                 
-                # फ़ॉन्ट रजिस्टर करें
+                # लोकल फ़ॉन्ट को रजिस्टर करें
                 pdf.add_font("HindiFont", style="", fname=font_filename)
                 
-                # 🔥 CRITICAL FIX 2: अंग्रेज़ी अक्षरों और ब्रैकेट के लिए डिफ़ॉल्ट 'helvetica' को फॉलबैक सेट करें
-                pdf.set_fallback_fonts(["helvetica"])
-                
-                # डिफ़ॉल्ट मुख्य फ़ॉन्ट असाइन करें
+                # ✅ FIXED: क्रैश करने वाली डिफ़ॉल्ट फॉलबैक फ़ॉन्ट लाइन को हटा दिया गया है
                 pdf.set_font("HindiFont", size=12)
 
                 # यहाँ से हिस्सा 2 जोड़ा जाएगा...
@@ -929,7 +926,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 pdf.line(10, pdf.get_y(), 200, pdf.get_y())
                 pdf.ln(5)
                 
-                # 2. प्रश्नों का लूप (Text Shaping के साथ मात्राएं और ब्रैकेट एकदम सही रेंडर होंगे)
+                # 2. प्रश्नों का लूप (टेक्स्ट शेपिंग मात्राओं और अंग्रेजी अक्षरों को एकदम शुद्ध रखेगी)
                 pdf.set_font("HindiFont", size=11)
                 for idx, q in enumerate(formatted_questions, 1):
                     # प्रश्न प्रिंट करना
@@ -965,7 +962,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी मात्राएं बिना किसी एरर के परफेक्ट दिखेंगी।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी मात्राएं बिना किसी त्रुटि के परफेक्ट दिखेंगी।",
                     parse_mode="HTML"
                 )
                 logging.info(f"✅ Fixed FPDF2 Hindi PDF with text shaping sent successfully.")
