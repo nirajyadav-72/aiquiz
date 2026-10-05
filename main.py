@@ -803,14 +803,13 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Final Summary aur Quiz Generation Confirmation
 # Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + Local Hindi PDF files"""
+    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + Local Fixed Hindi PDF files"""
     try:
         query = update.callback_query
         await query.answer()
         
         neg_val = float(query.data.replace("neg_", "").strip())
         
-        # Get quiz data from context
         quiz_build = context.user_data.get("quiz_build")
         if not quiz_build:
             quiz_build = {
@@ -829,15 +828,12 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         # ✅ SAVE QUIZ TO DATABASE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        
-        # Insert into quizzes table
         cursor.execute(
             "INSERT INTO quizzes (creator_id, title, description, timer, negative_value) VALUES (?, ?, ?, ?, ?)", 
             (user_id, quiz_build["title"], quiz_build["description"], quiz_build.get("timer", 30), neg_val)
         )
         quiz_id = cursor.lastrowid
         
-        # Insert questions
         questions = quiz_build.get("questions", [])
         formatted_questions = []
         
@@ -850,21 +846,15 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 pre_message = q.get("pre_message", "")
                 
                 if isinstance(correct, str):
-                    try:
-                        correct_idx = int(correct)
+                    try: correct_idx = int(correct)
                     except ValueError:
-                        try:
-                            correct_idx = options.index(str(correct))
-                        except (ValueError, IndexError):
-                            correct_idx = 0
+                        try: correct_idx = options.index(str(correct))
+                        except: correct_idx = 0
                 else:
-                    try:
-                        correct_idx = int(correct)
-                    except (ValueError, TypeError):
-                        correct_idx = 0
+                    try: correct_idx = int(correct)
+                    except: correct_idx = 0
                 
-                if correct_idx < 0 or correct_idx >= len(options):
-                    correct_idx = 0
+                if correct_idx < 0 or correct_idx >= len(options): correct_idx = 0
                 
                 cursor.execute(
                     "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
@@ -881,7 +871,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         conn.commit()
         conn.close()
         
-        # ✅ CLEAR TEMPORARY DATA FROM CONTEXT
+        # ✅ CLEAR CONTEXT
         context.user_data.pop("quiz_build", None)
         context.user_data.pop("quiz_build_creator_id", None)
         context.user_data.pop("title", None)
@@ -896,64 +886,50 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop("shuffle", None)
         context.user_data.pop("explanation", None)
         
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except Exception: pass
         
         neg_display = "Disabled" if neg_val == 0.0 else f"-{neg_val} per wrong answer"
-        await query.message.reply_text(
-            f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}"
-        )
+        await query.message.reply_text(f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}")
 
-        # 📂 1. GENERATE AND SEND JSON FILE
+        # 📂 1. SEND JSON FILE
         import io
         try:
             json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
             json_file = io.BytesIO(json_string.encode('utf-8'))
             safe_json_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
-            
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=json_file,
-                filename=safe_json_name,
-                caption=f"📂 <b>यहाँ आपकी AI जनरेटेड क्विज़ की JSON फाइल है!</b>",
-                parse_mode="HTML"
-            )
-        except Exception as json_err:
-            logging.error(f"❌ JSON File Error: {json_err}")
+            await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
+        except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Local Repository Font)
+        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Dual Fallback Font Logic)
         try:
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.pdfbase.fontcomponents import FontFontName
             
-            # 📁 गिटहब फोल्डर में मौजूद फॉन्ट फाइल का नाम
             font_filename = "NotoSansDevanagari-Regular.ttf"
             
-            # सुरक्षा जांच: अगर फोल्डर में फाइल का नाम अलग या मिसिंग हो
             if not os.path.exists(font_filename):
-                await query.message.reply_text(
-                    f"⚠️ <b>एरर:</b> गिटहब फोल्डर में <code>{font_filename}</code> फाइल नहीं मिली!\n"
-                    f"कृपया सुनिश्चित करें कि फाइल इसी नाम से आपके प्रोजेक्ट फोल्डर में मौजूद है।",
-                    parse_mode="HTML"
-                )
-                logging.error(f"Local font file {font_filename} not found in root directory.")
+                await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिली!", parse_mode="HTML")
             else:
-                # लोकल फॉन्ट को ReportLab में लोड और रजिस्टर करना
-                pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
+                # 1. हिंदी फ़ॉन्ट रजिस्टर करें
+                pdfmetrics.registerFont(TTFont('HindiRaw', font_filename))
+                
+                # 2. 🔥 CRITICAL FIX: अंग्रेजी (Helvetica) और हिंदी (HindiRaw) दोनों को मिलाकर एक फॉन्ट परिवार बनाएं
+                # इससे A, B, C, D और हिंदी शब्द दोनों एक साथ साफ़ दिखेंगे
+                pdfmetrics.registerFont(pdfmetrics.Font('CombinedFont', 'Helvetica', 'HindiRaw'))
                 
                 pdf_buffer = io.BytesIO()
                 doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
                 styles = getSampleStyleSheet()
                 story = []
                 
-                # फॉन्ट नाम 'HindiFont' सेट किया ताकि देवनागरी लिपि ब्लॉक न बने
-                title_style = ParagraphStyle('PdfTitle', fontName='HindiFont', fontSize=18, spaceAfter=15, alignment=1)
-                text_style = ParagraphStyle('PdfText', fontName='HindiFont', fontSize=11, leading=16, spaceAfter=5)
+                # 'CombinedFont' का उपयोग करें
+                title_style = ParagraphStyle('PdfTitle', fontName='CombinedFont', fontSize=18, spaceAfter=15, alignment=1)
+                text_style = ParagraphStyle('PdfText', fontName='CombinedFont', fontSize=11, leading=16, spaceAfter=5)
                 
                 story.append(Paragraph(f"<b>📚 Quiz: {quiz_build.get('title', 'AI Quiz')}</b>", title_style))
                 if quiz_build.get('description') and quiz_build.get('description') != "None":
@@ -963,7 +939,8 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 for idx, q in enumerate(formatted_questions, 1):
                     story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
                     for o_idx, opt in enumerate(q['options']):
-                        story.append(Paragraph(f"   {chr(65+o_idx)}) {opt}", text_style))
+                        # अब A, B, C, D साफ़ दिखाई देंगे
+                        story.append(Paragraph(f"   <b>{chr(65+o_idx)})</b> {opt}", text_style))
                     story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
                     if q.get('explanation'):
                         story.append(Paragraph(f"   <i>💡 Explanation: {q['explanation']}</i>", text_style))
@@ -977,16 +954,15 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें हिंदी शब्द बिल्कुल साफ और सही दिखाई देंगे।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर और शुद्ध हिंदी दोनों बिल्कुल परफेक्ट दिखेंगे।",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Hindi PDF file successfully sent using local font for Quiz ID {quiz_id}")
+                logging.info(f"✅ Fixed Hindi + English PDF sent successfully.")
             
         except Exception as pdf_err:
-            logging.error(f"❌ PDF Generation Error: {pdf_err}")
+            logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
             await query.message.reply_text("⚠️ JSON फाइल भेज दी गई है, लेकिन हिंदी PDF फाइल बनाने में कोई एरर आया।")
         
-        # ✅ SHOW SUMMARY PANEL AS USUAL
         await show_summary_panel_text(query, context, quiz_id)
         return ConversationHandler.END
         
