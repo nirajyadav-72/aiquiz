@@ -803,7 +803,7 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Final Summary aur Quiz Generation Confirmation
 # Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + PDF files"""
+    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + Local Hindi PDF files"""
     try:
         query = update.callback_query
         await query.answer()
@@ -839,7 +839,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         
         # Insert questions
         questions = quiz_build.get("questions", [])
-        formatted_questions = [] # दोनों फाइल्स के लिए साफ डेटा लिस्ट
+        formatted_questions = []
         
         for q_idx, q in enumerate(questions):
             if isinstance(q, dict):
@@ -849,7 +849,6 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 explanation = q.get("explanation", "")
                 pre_message = q.get("pre_message", "")
                 
-                # 🟢 Convert correct to INTEGER INDEX
                 if isinstance(correct, str):
                     try:
                         correct_idx = int(correct)
@@ -872,7 +871,6 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
 
-                # डेटा को लिस्ट में डालें
                 formatted_questions.append({
                     "question": q_text,
                     "options": options,
@@ -898,13 +896,11 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop("shuffle", None)
         context.user_data.pop("explanation", None)
         
-        # Remove callback buttons safely
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
         
-        # Show success message
         neg_display = "Disabled" if neg_val == 0.0 else f"-{neg_val} per wrong answer"
         await query.message.reply_text(
             f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}"
@@ -927,60 +923,68 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         except Exception as json_err:
             logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. GENERATE AND SEND PRINTABLE PDF FILE (In-Memory Logic)
+        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Local Repository Font)
         try:
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
             
-            pdf_buffer = io.BytesIO()
-            doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
-            styles = getSampleStyleSheet()
-            story = []
+            # 📁 गिटहब फोल्डर में मौजूद फॉन्ट फाइल का नाम
+            font_filename = "NotoSansDevanagari-Regular.ttf"
             
-            # कस्टम स्टाइल्स
-            title_style = ParagraphStyle('PdfTitle', parent=styles['Heading1'], fontSize=18, spaceAfter=15, alignment=1)
-            text_style = ParagraphStyle('PdfText', parent=styles['Normal'], fontSize=11, leading=15, spaceAfter=5)
-            
-            # टाइटल जोड़ें
-            story.append(Paragraph(f"<b>📚 Quiz: {quiz_build.get('title', 'AI Quiz')}</b>", title_style))
-            if quiz_build.get('description') and quiz_build.get('description') != "None":
-                story.append(Paragraph(f"📝 <i>Description: {quiz_build['description']}</i>", text_style))
-            story.append(Spacer(1, 15))
-            
-            # लूप चलाकर सभी प्रश्नों को PDF में फॉर्मेट करें
-            for idx, q in enumerate(formatted_questions, 1):
-                story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
+            # सुरक्षा जांच: अगर फोल्डर में फाइल का नाम अलग या मिसिंग हो
+            if not os.path.exists(font_filename):
+                await query.message.reply_text(
+                    f"⚠️ <b>एरर:</b> गिटहब फोल्डर में <code>{font_filename}</code> फाइल नहीं मिली!\n"
+                    f"कृपया सुनिश्चित करें कि फाइल इसी नाम से आपके प्रोजेक्ट फोल्डर में मौजूद है।",
+                    parse_mode="HTML"
+                )
+                logging.error(f"Local font file {font_filename} not found in root directory.")
+            else:
+                # लोकल फॉन्ट को ReportLab में लोड और रजिस्टर करना
+                pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
                 
-                # विकल्प
-                for o_idx, opt in enumerate(q['options']):
-                    story.append(Paragraph(f"   {chr(65+o_idx)}) {opt}", text_style))
+                pdf_buffer = io.BytesIO()
+                doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+                styles = getSampleStyleSheet()
+                story = []
                 
-                # सही उत्तर
-                story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
+                # फॉन्ट नाम 'HindiFont' सेट किया ताकि देवनागरी लिपि ब्लॉक न बने
+                title_style = ParagraphStyle('PdfTitle', fontName='HindiFont', fontSize=18, spaceAfter=15, alignment=1)
+                text_style = ParagraphStyle('PdfText', fontName='HindiFont', fontSize=11, leading=16, spaceAfter=5)
                 
-                # व्याख्या (यदि उपलब्ध हो)
-                if q.get('explanation'):
-                    story.append(Paragraph(f"   <i>💡 Explanation: {q['explanation']}</i>", text_style))
+                story.append(Paragraph(f"<b>📚 Quiz: {quiz_build.get('title', 'AI Quiz')}</b>", title_style))
+                if quiz_build.get('description') and quiz_build.get('description') != "None":
+                    story.append(Paragraph(f"📝 <i>Description: {quiz_build['description']}</i>", text_style))
+                story.append(Spacer(1, 15))
                 
-                story.append(Spacer(1, 12))
-            
-            doc.build(story)
-            pdf_buffer.seek(0)
-            
-            safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=pdf_buffer,
-                filename=safe_pdf_name,
-                caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nAap इसे किसी भी मोबाइल या कंप्यूटर में देख सकते हैं।",
-                parse_mode="HTML"
-            )
-            logging.info(f"✅ PDF file successfully sent for Quiz ID {quiz_id}")
+                for idx, q in enumerate(formatted_questions, 1):
+                    story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
+                    for o_idx, opt in enumerate(q['options']):
+                        story.append(Paragraph(f"   {chr(65+o_idx)}) {opt}", text_style))
+                    story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
+                    if q.get('explanation'):
+                        story.append(Paragraph(f"   <i>💡 Explanation: {q['explanation']}</i>", text_style))
+                    story.append(Spacer(1, 12))
+                
+                doc.build(story)
+                pdf_buffer.seek(0)
+                
+                safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=pdf_buffer,
+                    filename=safe_pdf_name,
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें हिंदी शब्द बिल्कुल साफ और सही दिखाई देंगे।",
+                    parse_mode="HTML"
+                )
+                logging.info(f"✅ Hindi PDF file successfully sent using local font for Quiz ID {quiz_id}")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}")
-            await query.message.reply_text("⚠️ JSON फाइल भेज दी गई है, लेकिन PDF फाइल बनाने में कोई एरर आया।")
+            await query.message.reply_text("⚠️ JSON फाइल भेज दी गई है, लेकिन हिंदी PDF फाइल बनाने में कोई एरर आया।")
         
         # ✅ SHOW SUMMARY PANEL AS USUAL
         await show_summary_panel_text(query, context, quiz_id)
