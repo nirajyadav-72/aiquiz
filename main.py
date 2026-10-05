@@ -802,11 +802,11 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI quiz, and send JSON + Fixed PDF files"""
+    """Handle negative marking selection, save AI quiz, and send JSON + PDF files"""
     try:
         query = update.callback_query
         await query.answer()
-        
+
         neg_val = float(query.data.replace("neg_", "").strip())
         quiz_build = context.user_data.get("quiz_build")
         if not quiz_build:
@@ -816,7 +816,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 "timer": context.user_data.get("time_limit", 30),
                 "questions": context.user_data.get("ai_questions", [])
             }
-        
+
         user_id = context.user_data.get("quiz_build_creator_id") or update.callback_query.from_user.id
         if not quiz_build or not quiz_build.get("title"):
             await query.message.reply_text("❌ Error: Quiz data missing. Start over with /newquiz or /autoquiz")
@@ -826,11 +826,11 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO quizzes (creator_id, title, description, timer, negative_value) VALUES (?, ?, ?, ?, ?)", 
+            "INSERT INTO quizzes (creator_id, title, description, timer, negative_value) VALUES (?, ?, ?, ?, ?)",
             (user_id, quiz_build["title"], quiz_build["description"], quiz_build.get("timer", 30), neg_val)
         )
         quiz_id = cursor.lastrowid
-        
+
         questions = quiz_build.get("questions", [])
         formatted_questions = []
         for q_idx, q in enumerate(questions):
@@ -840,24 +840,35 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 correct = q.get("correct", 0)
                 explanation = q.get("explanation", "")
                 pre_message = q.get("pre_message", "")
-                
+
                 if isinstance(correct, str):
-                    try: correct_idx = options.index(str(correct))
-                    except: correct_idx = 0
+                    try:
+                        correct_idx = options.index(str(correct))
+                    except:
+                        correct_idx = 0
                 else:
-                    try: correct_idx = int(correct)
-                    except: correct_idx = 0
-                
-                if correct_idx < 0 or correct_idx >= len(options): correct_idx = 0
+                    try:
+                        correct_idx = int(correct)
+                    except:
+                        correct_idx = 0
+
+                if correct_idx < 0 or correct_idx >= len(options):
+                    correct_idx = 0
+
                 cursor.execute(
-                    "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
+                    "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)",
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
-                formatted_questions.append({"question": q_text, "options": options, "correct": correct_idx, "explanation": explanation})
-        
+                formatted_questions.append({
+                    "question": q_text,
+                    "options": options,
+                    "correct": correct_idx,
+                    "explanation": explanation
+                })
+
         conn.commit()
         conn.close()
-        
+
         # ✅ CLEAR CONTEXT MEMORY
         context.user_data.pop("quiz_build", None)
         context.user_data.pop("quiz_build_creator_id", None)
@@ -872,10 +883,12 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop("options_count", None)
         context.user_data.pop("shuffle", None)
         context.user_data.pop("explanation", None)
-        
-        try: await query.edit_message_reply_markup(reply_markup=None)
-        except Exception: pass
-        
+
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
         neg_display = "Disabled" if neg_val == 0.0 else f"-{neg_val} per wrong answer"
         await query.message.reply_text(f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}")
 
@@ -885,118 +898,51 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
             json_file = io.BytesIO(json_string.encode('utf-8'))
             safe_json_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
-            await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
-        except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=json_file,
+                filename=safe_json_name,
+                caption="📂 <b>यहाँ आपकी JSON फाइल है!</b>",
+                parse_mode="HTML"
+            )
+        except Exception as json_err:
+            logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. DRAW PRINTABLE HINDI PDF (CANVAS ENGINE SETUP)
+        # 📄 2. FIXED HINDI PDF GENERATION
         try:
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import letter
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            import re
-            
-            font_filename = "NotoSansDevanagari-Regular.ttf"
-            if not os.path.exists(font_filename):
-                await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिलेगी!", parse_mode="HTML")
-            else:
-                pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
-                pdf_buffer = io.BytesIO()
-                c = canvas.Canvas(pdf_buffer, pagesize=letter)
-                width, height = letter
-                margin = 50
-                y = height - 60
-                
-                def draw_mixed_line(canvas_obj, x_start, y_curr, text_str, font_sz=11):
-                    tokens = re.split(r'([A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+)', text_str)
-                    curr_x = x_start
-                    for token in tokens:
-                        if not token: continue
-                        # फॉन्ट नाम का सही निर्धारण
-                        if re.match(r'^[A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+$', token):
-                            active_font = 'Helvetica'
-                        else:
-                            active_font = 'HindiFont'
-                        
-                        canvas_obj.setFont(active_font, font_sz)
-                        canvas_obj.drawString(curr_x, y_curr, token)
-                        # ✅ FIXED: canvas_obj.fontName की जगह सीधे active_font पास किया
-                        curr_x += canvas_obj.stringWidth(token, active_font, font_sz)
+            from pdf_generator import HindiPDFGenerator
 
-                c.setStrokeColorRGB(0.7, 0.7, 0.7)
-                c.setLineWidth(1)
-                title_text = f"Quiz: {quiz_build.get('title', 'AI Quiz')}"
-                draw_mixed_line(c, margin, y, title_text, font_sz=16)
-                y -= 25
-                
-                if quiz_build.get('description') and quiz_build.get('description') != "None":
-                    desc_text = f"Description: {quiz_build['description']}"
-                    draw_mixed_line(c, margin, y, desc_text, font_sz=10)
-                    y -= 20
-                
-                c.line(margin, y, width - margin, y)
-                y -= 30
-                
-                for idx, q in enumerate(formatted_questions, 1):
-                    if y < 100:
-                        c.showPage()
-                        y = height - 60
-                    
-                    q_full = f"Q{idx}. {q['question']}"
-                    if len(q_full) > 75:
-                        draw_mixed_line(c, margin, y, q_full[:75], font_sz=11)
-                        y -= 18
-                        draw_mixed_line(c, margin + 25, y, q_full[75:], font_sz=11)
-                    else:
-                        draw_mixed_line(c, margin, y, q_full, font_sz=11)
-                    y -= 20
-                    
-                    for o_idx, opt in enumerate(q['options']):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        opt_prefix = f"   {chr(65+o_idx)}) "
-                        draw_mixed_line(c, margin, y, opt_prefix + str(opt), font_sz=10.5)
-                        y -= 16
-                    
-                    y -= 4
-                    if y < 80:
-                        c.showPage()
-                        y = height - 60
-                        
-                    correct_letter = chr(65 + q['correct'])
-                    draw_mixed_line(c, margin, y, f"   Correct Answer: ({correct_letter})", font_sz=10.5)
-                    y -= 16
-                    
-                    if q.get('explanation'):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        draw_mixed_line(c, margin, y, f"   Explanation: {q['explanation']}", font_sz=10)
-                        y -= 18
-                        
-                    y -= 15
-                
-                c.save()
-                pdf_buffer.seek(0)
-                
-                safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=pdf_buffer,
-                    filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>",
-                    parse_mode="HTML"
-                )
-                logging.info(f"✅ Fixed Mix-canvas PDF sent successfully.")
-            
+            pdf_gen = HindiPDFGenerator("NotoSansDevanagari-Regular.ttf")
+
+            pdf_buffer = pdf_gen.generate_quiz_pdf({
+                "title": quiz_build.get("title", "AI Quiz"),
+                "description": quiz_build.get("description", ""),
+                "questions": formatted_questions
+            })
+
+            safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=pdf_buffer,
+                filename=safe_pdf_name,
+                caption="📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>",
+                parse_mode="HTML"
+            )
+            logging.info("✅ Hindi PDF sent successfully.")
+
+        except ImportError:
+            logging.warning("pdf_generator.py not found. Using fallback message.")
+            await query.message.reply_text("⚠️ PDF generator module missing. Please create pdf_generator.py first.")
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
-            await query.message.reply_text("⚠️ JSON फाइल भेज दी गई है, लेकिन हिंदी PDF फाइल बनाने में कोई एरर आया।")
-        
+            await query.message.reply_text(
+                "⚠️ JSON फाइल भेज दी गई है, लेकिन PDF फाइल बनाने में एरर आ गया है।",
+                parse_mode="HTML"
+            )
+
         await show_summary_panel_text(query, context, quiz_id)
         return ConversationHandler.END
-        
+
     except Exception as e:
         logging.error(f"Error in handle_negative_and_finish: {e}", exc_info=True)
         return ConversationHandler.END
