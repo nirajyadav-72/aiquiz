@@ -801,8 +801,9 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ConversationHandler.END
 
 # Final Summary aur Quiz Generation Confirmation
+# Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection and save AI-generated quiz to DB"""
+    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON file"""
     try:
         query = update.callback_query
         await query.answer()
@@ -838,6 +839,8 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         
         # Insert questions
         questions = quiz_build.get("questions", [])
+        formatted_questions = [] # JSON फाइल के लिए साफ़ डेटा लिस्ट
+        
         for q_idx, q in enumerate(questions):
             if isinstance(q, dict):
                 q_text = q.get("text") or q.get("question", "")
@@ -851,7 +854,6 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     try:
                         correct_idx = int(correct)
                     except ValueError:
-                        # अगर string option है, तो find करो
                         try:
                             correct_idx = options.index(str(correct))
                             logging.info(f"Q{q_idx}: Converted string '{correct}' to index {correct_idx}")
@@ -869,18 +871,26 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     logging.warning(f"Q{q_idx}: Invalid index {correct_idx}, using 0")
                     correct_idx = 0
                 
-                # 🟢 Log करो database में क्या जा रहा है
+                # Database को लॉग करें
                 logging.info(f"Q{q_idx}: Saving correct_answer={correct_idx}, option='{options[correct_idx]}'")
                 
                 cursor.execute(
                     "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
+
+                # JSON फाइल के लिए डेटा स्ट्रक्चर तैयार करें
+                formatted_questions.append({
+                    "question": q_text,
+                    "options": options,
+                    "correct": correct_idx,
+                    "explanation": explanation
+                })
         
         conn.commit()
         conn.close()
         
-        # ✅ CLEAR TEMPORARY DATA
+        # ✅ CLEAR TEMPORARY DATA FROM CONTEXT
         context.user_data.pop("quiz_build", None)
         context.user_data.pop("quiz_build_creator_id", None)
         context.user_data.pop("title", None)
@@ -895,7 +905,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop("shuffle", None)
         context.user_data.pop("explanation", None)
         
-        # Remove callback buttons
+        # Remove callback buttons safely
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
@@ -906,8 +916,36 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         await query.message.reply_text(
             f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}"
         )
+
+        # 📂 🔥 NEW: GENERATE AND SEND JSON FILE DIRECTLY FROM MEMORY
+        try:
+            import io
+            
+            # डेटा को सुंदर फॉर्मेट में इंडेंटेशन के साथ स्ट्रिंग में बदलें
+            json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
+            
+            # इन-मेमोरी फाइल ऑब्जेक्ट (BytesIO) बनाना
+            json_file = io.BytesIO(json_string.encode('utf-8'))
+            
+            # सुरक्षित फाइल नेम बनाना (स्पेस को अंडरस्कोर से बदलकर)
+            safe_filename = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
+            
+            # टेलीग्राम चैट में फाइल सेंड करना
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=json_file,
+                filename=safe_filename,
+                caption=f"📂 <b>यहाँ आपकी AI जनरेटेड क्विज़ की JSON फाइल है!</b>\n"
+                        f"Aap इसे बैकअप के रूप में रख सकते हैं या कहीं भी इम्पोर्ट कर सकते हैं।",
+                parse_mode="HTML"
+            )
+            logging.info(f"✅ JSON file successfully sent for Quiz ID {quiz_id}")
+            
+        except Exception as json_err:
+            logging.error(f"❌ Error while generating/sending JSON file: {json_err}")
+            await query.message.reply_text("⚠️ क्विज़ सेव हो गई है, लेकिन डेटा की JSON फाइल डिलीवर नहीं हो सकी।")
         
-        # ✅ SHOW SUMMARY PANEL
+        # ✅ SHOW SUMMARY PANEL AS USUAL
         await show_summary_panel_text(query, context, quiz_id)
         
         return ConversationHandler.END
