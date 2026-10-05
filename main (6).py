@@ -889,95 +889,134 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
         # 📄 2. DRAW PRINTABLE HINDI PDF (CANVAS ENGINE SETUP)
+        # 📄 2. DRAW PRINTABLE HINDI PDF (PARAGRAPH ENGINE SETUP FOR HINDI)
         try:
-            from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
+            import io
+            import os
             import re
             
             font_filename = "NotoSansDevanagari-Regular.ttf"
             if not os.path.exists(font_filename):
                 await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिलेगी!", parse_mode="HTML")
             else:
+                # 1. हिंदी फॉन्ट को रजिस्टर करें
                 pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
+                
                 pdf_buffer = io.BytesIO()
-                c = canvas.Canvas(pdf_buffer, pagesize=letter)
-                width, height = letter
-                margin = 50
-                y = height - 60
                 
-                def draw_mixed_line(canvas_obj, x_start, y_curr, text_str, font_sz=11):
-                    tokens = re.split(r'([A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+)', text_str)
-                    curr_x = x_start
-                    for token in tokens:
-                        if not token: continue
-                        # फॉन्ट नाम का सही निर्धारण
-                        if re.match(r'^[A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+$', token):
-                            active_font = 'Helvetica'
-                        else:
-                            active_font = 'HindiFont'
-                        
-                        canvas_obj.setFont(active_font, font_sz)
-                        canvas_obj.drawString(curr_x, y_curr, token)
-                        # ✅ FIXED: canvas_obj.fontName की जगह सीधे active_font पास किया
-                        curr_x += canvas_obj.stringWidth(token, active_font, font_sz)
+                # 2. SimpleDocTemplate का उपयोग करें जो Paragraphs को ऑटो-पेज ब्रेक के साथ मैनेज करता है
+                doc = SimpleDocTemplate(
+                    pdf_buffer, 
+                    pagesize=letter,
+                    rightMargin=50, 
+                    leftMargin=50, 
+                    topMargin=50, 
+                    bottomMargin=50
+                )
+                
+                # 3. स्टाइल्स सेट करें (ParagraphStyle में फॉन्ट को 'HindiFont' रखें ताकि मात्राएं न टूटें)
+                styles = getSampleStyleSheet()
+                
+                title_style = ParagraphStyle(
+                    'TitleStyle',
+                    fontName='HindiFont',
+                    fontSize=16,
+                    leading=20,
+                    textColor='#000000',
+                    spaceAfter=10
+                )
+                
+                desc_style = ParagraphStyle(
+                    'DescStyle',
+                    fontName='HindiFont',
+                    fontSize=10,
+                    leading=14,
+                    textColor='#444444',
+                    spaceAfter=10
+                )
+                
+                q_style = ParagraphStyle(
+                    'QuestionStyle',
+                    fontName='HindiFont',
+                    fontSize=11,
+                    leading=15,
+                    spaceBefore=12,
+                    spaceAfter=6,
+                    keepWithNext=True  # प्रश्न और विकल्प एक ही पेज पर रहें
+                )
+                
+                opt_style = ParagraphStyle(
+                    'OptionStyle',
+                    fontName='HindiFont',
+                    fontSize=10.5,
+                    leading=14,
+                    leftIndent=20,
+                    spaceAfter=4
+                )
+                
+                ans_style = ParagraphStyle(
+                    'AnswerStyle',
+                    fontName='HindiFont',
+                    fontSize=10.5,
+                    leading=14,
+                    leftIndent=20,
+                    textColor='#006600',
+                    spaceAfter=4
+                )
+                
+                expl_style = ParagraphStyle(
+                    'ExplStyle',
+                    fontName='HindiFont',
+                    fontSize=10,
+                    leading=14,
+                    leftIndent=20,
+                    textColor='#555555',
+                    spaceAfter=12
+                )
 
-                c.setStrokeColorRGB(0.7, 0.7, 0.7)
-                c.setLineWidth(1)
-                title_text = f"Quiz: {quiz_build.get('title', 'AI Quiz')}"
-                draw_mixed_line(c, margin, y, title_text, font_sz=16)
-                y -= 25
+                story = []
                 
+                # Title जोड़ें
+                title_html = f"<b>Quiz: {html.escape(quiz_build.get('title', 'AI Quiz'))}</b>"
+                story.append(Paragraph(title_html, title_style))
+                
+                # Description जोड़ें
                 if quiz_build.get('description') and quiz_build.get('description') != "None":
-                    desc_text = f"Description: {quiz_build['description']}"
-                    draw_mixed_line(c, margin, y, desc_text, font_sz=10)
-                    y -= 20
+                    desc_html = f"Description: {html.escape(quiz_build['description'])}"
+                    story.append(Paragraph(desc_html, desc_style))
                 
-                c.line(margin, y, width - margin, y)
-                y -= 30
+                # डिवाइडर लाइन
+                story.append(HRFlowable(width="100%", thickness=1, color="#CCCCCC", spaceBefore=5, spaceAfter=15))
                 
+                # प्रश्न और उत्तर लूप
                 for idx, q in enumerate(formatted_questions, 1):
-                    if y < 100:
-                        c.showPage()
-                        y = height - 60
+                    # प्रश्न
+                    q_html = f"<b>Q{idx}. {html.escape(q['question'])}</b>"
+                    story.append(Paragraph(q_html, q_style))
                     
-                    q_full = f"Q{idx}. {q['question']}"
-                    if len(q_full) > 75:
-                        draw_mixed_line(c, margin, y, q_full[:75], font_sz=11)
-                        y -= 18
-                        draw_mixed_line(c, margin + 25, y, q_full[75:], font_sz=11)
-                    else:
-                        draw_mixed_line(c, margin, y, q_full, font_sz=11)
-                    y -= 20
-                    
+                    # ऑप्शंस
                     for o_idx, opt in enumerate(q['options']):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        opt_prefix = f"   {chr(65+o_idx)}) "
-                        draw_mixed_line(c, margin, y, opt_prefix + str(opt), font_sz=10.5)
-                        y -= 16
+                        opt_prefix = f"{chr(65+o_idx)}) "
+                        opt_html = f"{opt_prefix}{html.escape(str(opt))}"
+                        story.append(Paragraph(opt_html, opt_style))
                     
-                    y -= 4
-                    if y < 80:
-                        c.showPage()
-                        y = height - 60
-                        
+                    # सही उत्तर
                     correct_letter = chr(65 + q['correct'])
-                    draw_mixed_line(c, margin, y, f"   Correct Answer: ({correct_letter})", font_sz=10.5)
-                    y -= 16
+                    ans_html = f"<b>Correct Answer: ({correct_letter})</b>"
+                    story.append(Paragraph(ans_html, ans_style))
                     
+                    # व्याख्या (Explanation)
                     if q.get('explanation'):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        draw_mixed_line(c, margin, y, f"   Explanation: {q['explanation']}", font_sz=10)
-                        y -= 18
-                        
-                    y -= 15
+                        expl_html = f"<i>Explanation: {html.escape(q['explanation'])}</i>"
+                        story.append(Paragraph(expl_html, expl_style))
                 
-                c.save()
+                # PDF बिल्ड करें
+                doc.build(story)
                 pdf_buffer.seek(0)
                 
                 safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
@@ -988,7 +1027,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Fixed Mix-canvas PDF sent successfully.")
+                logging.info(f"✅ Fixed Hindi Paragraph PDF sent successfully.")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
