@@ -801,15 +801,14 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ConversationHandler.END
 
 # Final Summary aur Quiz Generation Confirmation
-# Final Summary aur Quiz Generation Confirmation
+# Final Summary aur Quiz Generation Confirmation (HISSA 1)
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + Local Fixed Hindi PDF files"""
+    """Handle negative marking selection, save AI quiz, and send JSON + Fixed PDF files"""
     try:
         query = update.callback_query
         await query.answer()
         
         neg_val = float(query.data.replace("neg_", "").strip())
-        
         quiz_build = context.user_data.get("quiz_build")
         if not quiz_build:
             quiz_build = {
@@ -820,7 +819,6 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             }
         
         user_id = context.user_data.get("quiz_build_creator_id") or update.callback_query.from_user.id
-        
         if not quiz_build or not quiz_build.get("title"):
             await query.message.reply_text("❌ Error: Quiz data missing. Start over with /newquiz or /autoquiz")
             return ConversationHandler.END
@@ -836,7 +834,6 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         
         questions = quiz_build.get("questions", [])
         formatted_questions = []
-        
         for q_idx, q in enumerate(questions):
             if isinstance(q, dict):
                 q_text = q.get("text") or q.get("question", "")
@@ -846,32 +843,23 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 pre_message = q.get("pre_message", "")
                 
                 if isinstance(correct, str):
-                    try: correct_idx = int(correct)
-                    except ValueError:
-                        try: correct_idx = options.index(str(correct))
-                        except: correct_idx = 0
+                    try: correct_idx = options.index(str(correct))
+                    except: correct_idx = 0
                 else:
                     try: correct_idx = int(correct)
                     except: correct_idx = 0
                 
                 if correct_idx < 0 or correct_idx >= len(options): correct_idx = 0
-                
                 cursor.execute(
                     "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
-
-                formatted_questions.append({
-                    "question": q_text,
-                    "options": options,
-                    "correct": correct_idx,
-                    "explanation": explanation
-                })
+                formatted_questions.append({"question": q_text, "options": options, "correct": correct_idx, "explanation": explanation})
         
         conn.commit()
         conn.close()
         
-        # ✅ CLEAR CONTEXT
+        # ✅ CLEAR CONTEXT MEMORY
         context.user_data.pop("quiz_build", None)
         context.user_data.pop("quiz_build_creator_id", None)
         context.user_data.pop("title", None)
@@ -901,47 +889,94 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Fixed Font Registration)
+        # 📄 2. DRAW PRINTABLE HINDI PDF (CANVAS ENGINE SETUP)
         try:
+            from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
+            import re
             
             font_filename = "NotoSansDevanagari-Regular.ttf"
-            
             if not os.path.exists(font_filename):
-                await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिली!", parse_mode="HTML")
+                await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिलेगी!", parse_mode="HTML")
             else:
-                # 🔥 FIX: सिर्फ़ TTFont का उपयोग करके गिटहब फोल्डर से शुद्ध हिंदी फॉन्ट लोड करें
-                pdfmetrics.registerFont(TTFont('CombinedFont', font_filename))
-                
+                pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
                 pdf_buffer = io.BytesIO()
-                doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
-                styles = getSampleStyleSheet()
-                story = []
+                c = canvas.Canvas(pdf_buffer, pagesize=letter)
+                width, height = letter
+                margin = 50
+                y = height - 60
                 
-                # 'CombinedFont' को स्टाइल्स में असाइन करें
-                title_style = ParagraphStyle('PdfTitle', fontName='CombinedFont', fontSize=18, spaceAfter=15, alignment=1)
-                text_style = ParagraphStyle('PdfText', fontName='CombinedFont', fontSize=11, leading=16, spaceAfter=5)
+                def draw_mixed_line(canvas_obj, x_start, y_curr, text_str, font_sz=11):
+                    tokens = re.split(r'([A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+)', text_str)
+                    curr_x = x_start
+                    for token in tokens:
+                        if not token: continue
+                        if re.match(r'^[A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+$', token):
+                            canvas_obj.setFont('Helvetica', font_sz)
+                        else:
+                            canvas_obj.setFont('HindiFont', font_sz)
+                        canvas_obj.drawString(curr_x, y_curr, token)
+                        curr_x += canvas_obj.stringWidth(token, canvas_obj.fontName, font_sz)
+
+                # यहाँ से अगला हिस्सा (Hissa 2) जोड़ा जाएगा...
+                # ...हिस्सा 1 के आगे का निरंतर भाग (HISSA 2)
+                c.setStrokeColorRGB(0.7, 0.7, 0.7)
+                c.setLineWidth(1)
+                title_text = f"Quiz: {quiz_build.get('title', 'AI Quiz')}"
+                draw_mixed_line(c, margin, y, title_text, font_sz=16)
+                y -= 25
                 
-                story.append(Paragraph(f"<b>📚 Quiz: {quiz_build.get('title', 'AI Quiz')}</b>", title_style))
                 if quiz_build.get('description') and quiz_build.get('description') != "None":
-                    story.append(Paragraph(f"📝 <i>Description: {quiz_build['description']}</i>", text_style))
-                story.append(Spacer(1, 15))
+                    desc_text = f"Description: {quiz_build['description']}"
+                    draw_mixed_line(c, margin, y, desc_text, font_sz=10)
+                    y -= 20
+                
+                c.line(margin, y, width - margin, y)
+                y -= 30
                 
                 for idx, q in enumerate(formatted_questions, 1):
-                    story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
+                    if y < 100:
+                        c.showPage()
+                        y = height - 60
+                    
+                    q_full = f"Q{idx}. {q['question']}"
+                    if len(q_full) > 75:
+                        draw_mixed_line(c, margin, y, q_full[:75], font_sz=11)
+                        y -= 18
+                        draw_mixed_line(c, margin + 25, y, q_full[75:], font_sz=11)
+                    else:
+                        draw_mixed_line(c, margin, y, q_full, font_sz=11)
+                    y -= 20
+                    
                     for o_idx, opt in enumerate(q['options']):
-                        # NotoSansDevanagari खुद अंग्रेजी अक्षरों और ( ) ब्रैकेट को पूरी तरह सपोर्ट करता है
-                        story.append(Paragraph(f"   <b>{chr(65+o_idx)})</b> {opt}", text_style))
-                    story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
+                        if y < 80:
+                            c.showPage()
+                            y = height - 60
+                        opt_prefix = f"   {chr(65+o_idx)}) "
+                        draw_mixed_line(c, margin, y, opt_prefix + str(opt), font_sz=10.5)
+                        y -= 16
+                    
+                    y -= 4
+                    if y < 80:
+                        c.showPage()
+                        y = height - 60
+                        
+                    correct_letter = chr(65 + q['correct'])
+                    draw_mixed_line(c, margin, y, f"   Correct Answer: ({correct_letter})", font_sz=10.5)
+                    y -= 16
+                    
                     if q.get('explanation'):
-                        story.append(Paragraph(f"   <i>💡 Explanation: {q['explanation']}</i>", text_style))
-                    story.append(Spacer(1, 12))
+                        if y < 80:
+                            c.showPage()
+                            y = height - 60
+                        draw_mixed_line(c, margin, y, f"   Explanation: {q['explanation']}", font_sz=10)
+                        y -= 18
+                        
+                    y -= 15
                 
-                doc.build(story)
+                c.save()
                 pdf_buffer.seek(0)
                 
                 safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
@@ -949,10 +984,10 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी व्याकरण दोनों बिल्कुल सही दिखेंगे।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर ब्रैकेट के साथ और शुद्ध देवनागरी मात्राएं बिल्कुल सही दिखेंगी।",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Fixed Hindi PDF sent successfully without fontcomponents error.")
+                logging.info(f"✅ Fixed Mix-canvas PDF sent successfully.")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
