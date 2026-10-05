@@ -803,7 +803,7 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Final Summary aur Quiz Generation Confirmation
 # Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON file"""
+    """Handle negative marking selection, save AI-generated quiz to DB, and send JSON + PDF files"""
     try:
         query = update.callback_query
         await query.answer()
@@ -839,7 +839,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         
         # Insert questions
         questions = quiz_build.get("questions", [])
-        formatted_questions = [] # JSON फाइल के लिए साफ़ डेटा लिस्ट
+        formatted_questions = [] # दोनों फाइल्स के लिए साफ डेटा लिस्ट
         
         for q_idx, q in enumerate(questions):
             if isinstance(q, dict):
@@ -849,37 +849,30 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 explanation = q.get("explanation", "")
                 pre_message = q.get("pre_message", "")
                 
-                # 🟢 CRITICAL: Convert correct to INTEGER INDEX
+                # 🟢 Convert correct to INTEGER INDEX
                 if isinstance(correct, str):
                     try:
                         correct_idx = int(correct)
                     except ValueError:
                         try:
                             correct_idx = options.index(str(correct))
-                            logging.info(f"Q{q_idx}: Converted string '{correct}' to index {correct_idx}")
                         except (ValueError, IndexError):
                             correct_idx = 0
-                            logging.warning(f"Q{q_idx}: Could not find '{correct}', using 0")
                 else:
                     try:
                         correct_idx = int(correct)
                     except (ValueError, TypeError):
                         correct_idx = 0
                 
-                # Validate index
                 if correct_idx < 0 or correct_idx >= len(options):
-                    logging.warning(f"Q{q_idx}: Invalid index {correct_idx}, using 0")
                     correct_idx = 0
-                
-                # Database को लॉग करें
-                logging.info(f"Q{q_idx}: Saving correct_answer={correct_idx}, option='{options[correct_idx]}'")
                 
                 cursor.execute(
                     "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
 
-                # JSON फाइल के लिए डेटा स्ट्रक्चर तैयार करें
+                # डेटा को लिस्ट में डालें
                 formatted_questions.append({
                     "question": q_text,
                     "options": options,
@@ -917,43 +910,86 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}"
         )
 
-        # 📂 🔥 NEW: GENERATE AND SEND JSON FILE DIRECTLY FROM MEMORY
+        # 📂 1. GENERATE AND SEND JSON FILE
+        import io
         try:
-            import io
-            
-            # डेटा को सुंदर फॉर्मेट में इंडेंटेशन के साथ स्ट्रिंग में बदलें
             json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
-            
-            # इन-मेमोरी फाइल ऑब्जेक्ट (BytesIO) बनाना
             json_file = io.BytesIO(json_string.encode('utf-8'))
+            safe_json_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
             
-            # सुरक्षित फाइल नेम बनाना (स्पेस को अंडरस्कोर से बदलकर)
-            safe_filename = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
-            
-            # टेलीग्राम चैट में फाइल सेंड करना
             await context.bot.send_document(
                 chat_id=query.message.chat_id,
                 document=json_file,
-                filename=safe_filename,
-                caption=f"📂 <b>यहाँ आपकी AI जनरेटेड क्विज़ की JSON फाइल है!</b>\n"
-                        f"Aap इसे बैकअप के रूप में रख सकते हैं या कहीं भी इम्पोर्ट कर सकते हैं।",
+                filename=safe_json_name,
+                caption=f"📂 <b>यहाँ आपकी AI जनरेटेड क्विज़ की JSON फाइल है!</b>",
                 parse_mode="HTML"
             )
-            logging.info(f"✅ JSON file successfully sent for Quiz ID {quiz_id}")
-            
         except Exception as json_err:
-            logging.error(f"❌ Error while generating/sending JSON file: {json_err}")
-            await query.message.reply_text("⚠️ क्विज़ सेव हो गई है, लेकिन डेटा की JSON फाइल डिलीवर नहीं हो सकी।")
+            logging.error(f"❌ JSON File Error: {json_err}")
+
+        # 📄 2. GENERATE AND SEND PRINTABLE PDF FILE (In-Memory Logic)
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            
+            pdf_buffer = io.BytesIO()
+            doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            styles = getSampleStyleSheet()
+            story = []
+            
+            # कस्टम स्टाइल्स
+            title_style = ParagraphStyle('PdfTitle', parent=styles['Heading1'], fontSize=18, spaceAfter=15, alignment=1)
+            text_style = ParagraphStyle('PdfText', parent=styles['Normal'], fontSize=11, leading=15, spaceAfter=5)
+            
+            # टाइटल जोड़ें
+            story.append(Paragraph(f"<b>📚 Quiz: {quiz_build.get('title', 'AI Quiz')}</b>", title_style))
+            if quiz_build.get('description') and quiz_build.get('description') != "None":
+                story.append(Paragraph(f"📝 <i>Description: {quiz_build['description']}</i>", text_style))
+            story.append(Spacer(1, 15))
+            
+            # लूप चलाकर सभी प्रश्नों को PDF में फॉर्मेट करें
+            for idx, q in enumerate(formatted_questions, 1):
+                story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
+                
+                # विकल्प
+                for o_idx, opt in enumerate(q['options']):
+                    story.append(Paragraph(f"   {chr(65+o_idx)}) {opt}", text_style))
+                
+                # सही उत्तर
+                story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
+                
+                # व्याख्या (यदि उपलब्ध हो)
+                if q.get('explanation'):
+                    story.append(Paragraph(f"   <i>💡 Explanation: {q['explanation']}</i>", text_style))
+                
+                story.append(Spacer(1, 12))
+            
+            doc.build(story)
+            pdf_buffer.seek(0)
+            
+            safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=pdf_buffer,
+                filename=safe_pdf_name,
+                caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nAap इसे किसी भी मोबाइल या कंप्यूटर में देख सकते हैं।",
+                parse_mode="HTML"
+            )
+            logging.info(f"✅ PDF file successfully sent for Quiz ID {quiz_id}")
+            
+        except Exception as pdf_err:
+            logging.error(f"❌ PDF Generation Error: {pdf_err}")
+            await query.message.reply_text("⚠️ JSON फाइल भेज दी गई है, लेकिन PDF फाइल बनाने में कोई एरर आया।")
         
         # ✅ SHOW SUMMARY PANEL AS USUAL
         await show_summary_panel_text(query, context, quiz_id)
-        
         return ConversationHandler.END
         
     except Exception as e:
         logging.error(f"Error in handle_negative_and_finish: {e}", exc_info=True)
         return ConversationHandler.END
-        
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Quiz setup processing setup abandoned.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
