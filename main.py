@@ -801,13 +801,16 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ConversationHandler.END
 
 # Final Summary aur Quiz Generation Confirmation
+# Final Summary aur Quiz Generation Confirmation
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI quiz, and send JSON + PDF files"""
+    """Handle negative marking selection, save AI-generated quiz to DB and send questions as text message"""
     try:
         query = update.callback_query
         await query.answer()
-
+        
         neg_val = float(query.data.replace("neg_", "").strip())
+        
+        # Get quiz data from context
         quiz_build = context.user_data.get("quiz_build")
         if not quiz_build:
             quiz_build = {
@@ -816,8 +819,9 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 "timer": context.user_data.get("time_limit", 30),
                 "questions": context.user_data.get("ai_questions", [])
             }
-
+        
         user_id = context.user_data.get("quiz_build_creator_id") or update.callback_query.from_user.id
+        
         if not quiz_build or not quiz_build.get("title"):
             await query.message.reply_text("❌ Error: Quiz data missing. Start over with /newquiz or /autoquiz")
             return ConversationHandler.END
@@ -825,14 +829,16 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         # ✅ SAVE QUIZ TO DATABASE
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
+        
+        # Insert into quizzes table
         cursor.execute(
-            "INSERT INTO quizzes (creator_id, title, description, timer, negative_value) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO quizzes (creator_id, title, description, timer, negative_value) VALUES (?, ?, ?, ?, ?)", 
             (user_id, quiz_build["title"], quiz_build["description"], quiz_build.get("timer", 30), neg_val)
         )
         quiz_id = cursor.lastrowid
-
+        
+        # Insert questions
         questions = quiz_build.get("questions", [])
-        formatted_questions = []
         for q_idx, q in enumerate(questions):
             if isinstance(q, dict):
                 q_text = q.get("text") or q.get("question", "")
@@ -840,36 +846,52 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 correct = q.get("correct", 0)
                 explanation = q.get("explanation", "")
                 pre_message = q.get("pre_message", "")
-
+                
+                # 🟢 CRITICAL: Convert correct to INTEGER INDEX
                 if isinstance(correct, str):
                     try:
-                        correct_idx = options.index(str(correct))
-                    except:
-                        correct_idx = 0
+                        correct_idx = int(correct)
+                    except ValueError:
+                        try:
+                            correct_idx = options.index(str(correct))
+                        except (ValueError, IndexError):
+                            correct_idx = 0
                 else:
                     try:
                         correct_idx = int(correct)
-                    except:
+                    except (ValueError, TypeError):
                         correct_idx = 0
-
+                
                 if correct_idx < 0 or correct_idx >= len(options):
                     correct_idx = 0
-
+                
                 cursor.execute(
-                    "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
                     (quiz_id, q_text, json.dumps(options), correct_idx, explanation, pre_message)
                 )
-                formatted_questions.append({
-                    "question": q_text,
-                    "options": options,
-                    "correct": correct_idx,
-                    "explanation": explanation
-                })
-
+        
         conn.commit()
         conn.close()
 
-        # ✅ CLEAR CONTEXT MEMORY
+        # 🔥 NEW CHANGELOG: सभी प्रश्नों को टेक्स्ट फॉर्मेट में यूज़र को भेजें
+        try:
+            questions_text_msg = format_quiz_questions_to_text(quiz_build["title"], questions)
+            
+            # Telegram 4096 character size protection chunking logic
+            if len(questions_text_msg) <= 4000:
+                await query.message.reply_text(text=questions_text_msg, parse_mode="Markdown")
+            else:
+                # अगर सवाल बहुत ज्यादा हैं तो मैसेज को हिस्सों में तोड़कर भेजें
+                for start in range(0, len(questions_text_msg), 4000):
+                    await query.message.reply_text(
+                        text=questions_text_msg[start:start+4000], 
+                        parse_mode="Markdown"
+                    )
+                    await asyncio.sleep(0.5) # बाढ़ नियंत्रण (Flood control delay)
+        except Exception as txt_err:
+            logging.error(f"Error sending quiz text copy to user: {txt_err}")
+        
+        # ✅ CLEAR TEMPORARY DATA
         context.user_data.pop("quiz_build", None)
         context.user_data.pop("quiz_build_creator_id", None)
         context.user_data.pop("title", None)
@@ -883,69 +905,50 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop("options_count", None)
         context.user_data.pop("shuffle", None)
         context.user_data.pop("explanation", None)
-
+        
+        # Remove callback buttons
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
-
+        
+        # Show success message
         neg_display = "Disabled" if neg_val == 0.0 else f"-{neg_val} per wrong answer"
-        await query.message.reply_text(f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}")
-
-        # 📂 1. SEND JSON FILE
-        import io
-        try:
-            json_string = json.dumps(formatted_questions, indent=4, ensure_ascii=False)
-            json_file = io.BytesIO(json_string.encode('utf-8'))
-            safe_json_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.json"
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=json_file,
-                filename=safe_json_name,
-                caption="📂 <b>यहाँ आपकी JSON फाइल है!</b>",
-                parse_mode="HTML"
-            )
-        except Exception as json_err:
-            logging.error(f"❌ JSON File Error: {json_err}")
-
-        # 📄 2. FIXED HINDI PDF GENERATION
-        try:
-            from pdf_generator import HindiPDFGenerator
-
-            pdf_gen = HindiPDFGenerator("NotoSansDevanagari-Regular.ttf")
-
-            pdf_buffer = pdf_gen.generate_quiz_pdf({
-                "title": quiz_build.get("title", "AI Quiz"),
-                "description": quiz_build.get("description", ""),
-                "questions": formatted_questions
-            })
-
-            safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=pdf_buffer,
-                filename=safe_pdf_name,
-                caption="📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>",
-                parse_mode="HTML"
-            )
-            logging.info("✅ Hindi PDF sent successfully.")
-
-        except ImportError:
-            logging.warning("pdf_generator.py not found. Using fallback message.")
-            await query.message.reply_text("⚠️ PDF generator module missing. Please create pdf_generator.py first.")
-        except Exception as pdf_err:
-            logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
-            await query.message.reply_text(
-                "⚠️ JSON फाइल भेज दी गई है, लेकिन PDF फाइल बनाने में एरर आ गया है।",
-                parse_mode="HTML"
-            )
-
+        await query.message.reply_text(
+            f"✅ Quiz Created Successfully!\n⏱ Timer: {quiz_build.get('timer', 30)}s\n📉 Negative Marking: {neg_display}"
+        )
+        
+        # ✅ SHOW SUMMARY PANEL
         await show_summary_panel_text(query, context, quiz_id)
+        
         return ConversationHandler.END
-
+        
     except Exception as e:
         logging.error(f"Error in handle_negative_and_finish: {e}", exc_info=True)
         return ConversationHandler.END
+
+def format_quiz_questions_to_text(title, questions):
+    """AI द्वारा जनरेट किए गए सवालों को टेक्स्ट मैसेज फॉर्मेट में बदलता है"""
+    msg = f"📝 **AI Generated Quiz Questions Layout**\n"
+    msg += f"📚 **Title:** {title}\n"
+    msg += f"━━━━━━━━━━━━━━━━━\n\n"
+    
+    for idx, q in enumerate(questions, 1):
+        q_text = q.get("text") or q.get("question", "")
+        options = q.get("options", [])
+        correct_idx = q.get("correct", 0)
+        explanation = q.get("explanation", "")
+        
+        msg += f"❓ **Q{idx}. {q_text}**\n"
+        for o_idx, opt in enumerate(options, 1):
+            marker = "✅" if o_idx - 1 == correct_idx else "🔹"
+            msg += f"  {marker} {o_idx}. {opt}\n"
+            
+        if explanation:
+            msg += f"💡 *Explanation:* {explanation}\n"
+        msg += f"━━━━━━━━━━━━━━━━━\n\n"
+        
+    return msg
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Quiz setup processing setup abandoned.", reply_markup=ReplyKeyboardRemove())
