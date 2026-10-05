@@ -901,33 +901,28 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Dual Fallback Font Logic)
+        # 📄 2. GENERATE AND SEND PRINTABLE HINDI PDF FILE (Fixed Font Registration)
         try:
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
-            from reportlab.pdfbase.fontcomponents import FontFontName
             
             font_filename = "NotoSansDevanagari-Regular.ttf"
             
             if not os.path.exists(font_filename):
                 await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिली!", parse_mode="HTML")
             else:
-                # 1. हिंदी फ़ॉन्ट रजिस्टर करें
-                pdfmetrics.registerFont(TTFont('HindiRaw', font_filename))
-                
-                # 2. 🔥 CRITICAL FIX: अंग्रेजी (Helvetica) और हिंदी (HindiRaw) दोनों को मिलाकर एक फॉन्ट परिवार बनाएं
-                # इससे A, B, C, D और हिंदी शब्द दोनों एक साथ साफ़ दिखेंगे
-                pdfmetrics.registerFont(pdfmetrics.Font('CombinedFont', 'Helvetica', 'HindiRaw'))
+                # 🔥 FIX: सिर्फ़ TTFont का उपयोग करके गिटहब फोल्डर से शुद्ध हिंदी फॉन्ट लोड करें
+                pdfmetrics.registerFont(TTFont('CombinedFont', font_filename))
                 
                 pdf_buffer = io.BytesIO()
                 doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
                 styles = getSampleStyleSheet()
                 story = []
                 
-                # 'CombinedFont' का उपयोग करें
+                # 'CombinedFont' को स्टाइल्स में असाइन करें
                 title_style = ParagraphStyle('PdfTitle', fontName='CombinedFont', fontSize=18, spaceAfter=15, alignment=1)
                 text_style = ParagraphStyle('PdfText', fontName='CombinedFont', fontSize=11, leading=16, spaceAfter=5)
                 
@@ -939,7 +934,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                 for idx, q in enumerate(formatted_questions, 1):
                     story.append(Paragraph(f"<b>Q{idx}. {q['question']}</b>", text_style))
                     for o_idx, opt in enumerate(q['options']):
-                        # अब A, B, C, D साफ़ दिखाई देंगे
+                        # NotoSansDevanagari खुद अंग्रेजी अक्षरों और ( ) ब्रैकेट को पूरी तरह सपोर्ट करता है
                         story.append(Paragraph(f"   <b>{chr(65+o_idx)})</b> {opt}", text_style))
                     story.append(Paragraph(f"   <b>👉 Correct Answer: ({chr(65+q['correct'])})</b>", text_style))
                     if q.get('explanation'):
@@ -954,10 +949,10 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर और शुद्ध हिंदी दोनों बिल्कुल परफेक्ट दिखेंगे।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी व्याकरण दोनों बिल्कुल सही दिखेंगे।",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Fixed Hindi + English PDF sent successfully.")
+                logging.info(f"✅ Fixed Hindi PDF sent successfully without fontcomponents error.")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
