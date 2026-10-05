@@ -913,14 +913,18 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     curr_x = x_start
                     for token in tokens:
                         if not token: continue
+                        # फॉन्ट नाम का सही निर्धारण
                         if re.match(r'^[A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+$', token):
-                            canvas_obj.setFont('Helvetica', font_sz)
+                            active_font = 'Helvetica'
                         else:
-                            canvas_obj.setFont('HindiFont', font_sz)
+                            active_font = 'HindiFont'
+                        
+                        canvas_obj.setFont(active_font, font_sz)
                         canvas_obj.drawString(curr_x, y_curr, token)
-                        curr_x += canvas_obj.stringWidth(token, canvas_obj.fontName, font_sz)
+                        # ✅ FIXED: canvas_obj.fontName की जगह सीधे active_font पास किया
+                        curr_x += canvas_obj.stringWidth(token, active_font, font_sz)
 
-                # यहाँ से अगला हिस्सा (Hissa 2) जोड़ा जाएगा...
+                # यहाँ से हिस्सा 2 जोड़ा जाएगा...
                 # ...हिस्सा 1 के आगे का निरंतर भाग (HISSA 2)
                 c.setStrokeColorRGB(0.7, 0.7, 0.7)
                 c.setLineWidth(1)
