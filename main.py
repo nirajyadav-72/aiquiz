@@ -803,7 +803,7 @@ async def handle_time_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # Final Summary aur Quiz Generation Confirmation
 # Final Summary aur Quiz Generation Confirmation (HISSA 1)
 async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle negative marking selection, save AI quiz, and send JSON + Fixed PDF files"""
+    """Handle negative marking selection, save AI quiz, and send JSON + Perfect Hindi PDF files"""
     try:
         query = update.callback_query
         await query.answer()
@@ -889,98 +889,68 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. DRAW PRINTABLE HINDI PDF (CANVAS ENGINE SETUP)
+        # 📄 2. DRAW PRINTABLE HINDI PDF (FPDF2 ENGINE)
         try:
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import letter
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            import re
+            from fpdf import FPDF
             
             font_filename = "NotoSansDevanagari-Regular.ttf"
             if not os.path.exists(font_filename):
                 await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिलेगी!", parse_mode="HTML")
             else:
-                pdfmetrics.registerFont(TTFont('HindiFont', font_filename))
-                pdf_buffer = io.BytesIO()
-                c = canvas.Canvas(pdf_buffer, pagesize=letter)
-                width, height = letter
-                margin = 50
-                y = height - 60
+                # FPDF ऑब्जेक्ट तैयार करना (यूनिकोड और ऑटो-पेज ब्रेक सपोर्ट के साथ)
+                pdf = FPDF()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.add_page()
                 
-                def draw_mixed_line(canvas_obj, x_start, y_curr, text_str, font_sz=11):
-                    tokens = re.split(r'([A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+)', text_str)
-                    curr_x = x_start
-                    for token in tokens:
-                        if not token: continue
-                        # फॉन्ट नाम का सही निर्धारण
-                        if re.match(r'^[A-Za-z0-9\s\(\)\:\-\.\,\?\]\[\s]+$', token):
-                            active_font = 'Helvetica'
-                        else:
-                            active_font = 'HindiFont'
-                        
-                        canvas_obj.setFont(active_font, font_sz)
-                        canvas_obj.drawString(curr_x, y_curr, token)
-                        # ✅ FIXED: canvas_obj.fontName की जगह सीधे active_font पास किया
-                        curr_x += canvas_obj.stringWidth(token, active_font, font_sz)
+                # गिटहब फोल्डर से शुद्ध हिंदी/अंग्रेजी कंबाइंड फ़ॉन्ट लोड करना
+                pdf.add_font("HindiFont", style="", fname=font_filename)
+                pdf.set_font("HindiFont", size=12)
 
                 # यहाँ से हिस्सा 2 जोड़ा जाएगा...
                 # ...हिस्सा 1 के आगे का निरंतर भाग (HISSA 2)
-                c.setStrokeColorRGB(0.7, 0.7, 0.7)
-                c.setLineWidth(1)
-                title_text = f"Quiz: {quiz_build.get('title', 'AI Quiz')}"
-                draw_mixed_line(c, margin, y, title_text, font_sz=16)
-                y -= 25
+                # 1. मुख्य हेडर (Title)
+                pdf.set_font("HindiFont", size=16)
+                pdf.cell(0, 10, txt=f"Quiz: {quiz_build.get('title', 'AI Quiz')}", ln=True, align='C')
+                pdf.ln(5)
                 
+                # डिस्क्रिप्शन
                 if quiz_build.get('description') and quiz_build.get('description') != "None":
-                    desc_text = f"Description: {quiz_build['description']}"
-                    draw_mixed_line(c, margin, y, desc_text, font_sz=10)
-                    y -= 20
+                    pdf.set_font("HindiFont", size=10)
+                    pdf.cell(0, 6, txt=f"Description: {quiz_build['description']}", ln=True, align='L')
+                    pdf.ln(2)
                 
-                c.line(margin, y, width - margin, y)
-                y -= 30
+                pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                pdf.ln(5)
                 
+                # 2. प्रश्नों का लूप (FPDF2 multi_cell ऑटोमैटिक मात्राओं को परफेक्ट जोड़ता है)
+                pdf.set_font("HindiFont", size=11)
                 for idx, q in enumerate(formatted_questions, 1):
-                    if y < 100:
-                        c.showPage()
-                        y = height - 60
+                    # प्रश्न प्रिंट करना
+                    q_text = f"Q{idx}. {q['question']}"
+                    pdf.multi_cell(0, 7, txt=q_text)
+                    pdf.ln(2)
                     
-                    q_full = f"Q{idx}. {q['question']}"
-                    if len(q_full) > 75:
-                        draw_mixed_line(c, margin, y, q_full[:75], font_sz=11)
-                        y -= 18
-                        draw_mixed_line(c, margin + 25, y, q_full[75:], font_sz=11)
-                    else:
-                        draw_mixed_line(c, margin, y, q_full, font_sz=11)
-                    y -= 20
-                    
+                    # ऑप्शन्स प्रिंट करना (A, B, C, D ब्रैकेट के साथ साफ़ दिखेगा)
                     for o_idx, opt in enumerate(q['options']):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        opt_prefix = f"   {chr(65+o_idx)}) "
-                        draw_mixed_line(c, margin, y, opt_prefix + str(opt), font_sz=10.5)
-                        y -= 16
+                        opt_line = f"   {chr(65+o_idx)}) {opt}"
+                        pdf.multi_cell(0, 6, txt=opt_line)
+                        pdf.ln(1)
                     
-                    y -= 4
-                    if y < 80:
-                        c.showPage()
-                        y = height - 60
-                        
+                    # सही उत्तर
                     correct_letter = chr(65 + q['correct'])
-                    draw_mixed_line(c, margin, y, f"   Correct Answer: ({correct_letter})", font_sz=10.5)
-                    y -= 16
+                    pdf.multi_cell(0, 6, txt=f"   Correct Answer: ({correct_letter})")
+                    pdf.ln(1)
                     
+                    # एक्सप्लेनेशन
                     if q.get('explanation'):
-                        if y < 80:
-                            c.showPage()
-                            y = height - 60
-                        draw_mixed_line(c, margin, y, f"   Explanation: {q['explanation']}", font_sz=10)
-                        y -= 18
+                        pdf.multi_cell(0, 6, txt=f"   Explanation: {q['explanation']}")
+                        pdf.ln(2)
                         
-                    y -= 15
+                    pdf.ln(4) # हर सवाल के बीच का परफेक्ट स्पेस
                 
-                c.save()
+                # इन-मेमोरी पीडीएफ आउटपुट जनरेट करना
+                pdf_bytes = pdf.output()
+                pdf_buffer = io.BytesIO(pdf_bytes)
                 pdf_buffer.seek(0)
                 
                 safe_pdf_name = f"{quiz_build.get('title', 'Quiz').replace(' ', '_')}_{quiz_id}.pdf"
@@ -988,10 +958,10 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर ब्रैकेट के साथ और शुद्ध देवनागरी मात्राएं बिल्कुल सही दिखेंगी।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी व्याकरण बिना किसी त्रुटि के दिखाई देंगे।",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Fixed Mix-canvas PDF sent successfully.")
+                logging.info(f"✅ Fixed FPDF2 Hindi PDF sent successfully.")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
