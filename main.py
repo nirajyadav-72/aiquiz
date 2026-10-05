@@ -889,7 +889,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             await context.bot.send_document(chat_id=query.message.chat_id, document=json_file, filename=safe_json_name, caption=f"📂 <b>यहाँ आपकी JSON फाइल है!</b>", parse_mode="HTML")
         except Exception as json_err: logging.error(f"❌ JSON File Error: {json_err}")
 
-        # 📄 2. DRAW PRINTABLE HINDI PDF (FPDF2 ENGINE)
+        # 📄 2. DRAW PRINTABLE HINDI PDF (FPDF2 ADVANCED LOGIC)
         try:
             from fpdf import FPDF
             
@@ -897,56 +897,63 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
             if not os.path.exists(font_filename):
                 await query.message.reply_text(f"⚠️ फोल्डर में <code>{font_filename}</code> फाइल नहीं मिलेगी!", parse_mode="HTML")
             else:
-                # FPDF ऑब्जेक्ट तैयार करना (यूनिकोड और ऑटो-पेज ब्रेक सपोर्ट के साथ)
                 pdf = FPDF()
                 pdf.set_auto_page_break(auto=True, margin=15)
                 pdf.add_page()
                 
-                # गिटहब फोल्डर से शुद्ध हिंदी/अंग्रेजी कंबाइंड फ़ॉन्ट लोड करना
+                # 🔥 CRITICAL FIX 1: मात्राओं को टूटने से बचाने के लिए Text Shaping ऑन करें
+                pdf.set_text_shaping(True)
+                
+                # फ़ॉन्ट रजिस्टर करें
                 pdf.add_font("HindiFont", style="", fname=font_filename)
+                
+                # 🔥 CRITICAL FIX 2: अंग्रेज़ी अक्षरों और ब्रैकेट के लिए डिफ़ॉल्ट 'helvetica' को फॉलबैक सेट करें
+                pdf.set_fallback_fonts(["helvetica"])
+                
+                # डिफ़ॉल्ट मुख्य फ़ॉन्ट असाइन करें
                 pdf.set_font("HindiFont", size=12)
 
                 # यहाँ से हिस्सा 2 जोड़ा जाएगा...
                 # ...हिस्सा 1 के आगे का निरंतर भाग (HISSA 2)
                 # 1. मुख्य हेडर (Title)
                 pdf.set_font("HindiFont", size=16)
-                pdf.cell(0, 10, txt=f"Quiz: {quiz_build.get('title', 'AI Quiz')}", ln=True, align='C')
+                pdf.cell(0, 10, text=f"Quiz: {quiz_build.get('title', 'AI Quiz')}", ln=True, align='C')
                 pdf.ln(5)
                 
                 # डिस्क्रिप्शन
                 if quiz_build.get('description') and quiz_build.get('description') != "None":
                     pdf.set_font("HindiFont", size=10)
-                    pdf.cell(0, 6, txt=f"Description: {quiz_build['description']}", ln=True, align='L')
+                    pdf.cell(0, 6, text=f"Description: {quiz_build['description']}", ln=True, align='L')
                     pdf.ln(2)
                 
                 pdf.line(10, pdf.get_y(), 200, pdf.get_y())
                 pdf.ln(5)
                 
-                # 2. प्रश्नों का लूप (FPDF2 multi_cell ऑटोमैटिक मात्राओं को परफेक्ट जोड़ता है)
+                # 2. प्रश्नों का लूप (Text Shaping के साथ मात्राएं और ब्रैकेट एकदम सही रेंडर होंगे)
                 pdf.set_font("HindiFont", size=11)
                 for idx, q in enumerate(formatted_questions, 1):
                     # प्रश्न प्रिंट करना
                     q_text = f"Q{idx}. {q['question']}"
-                    pdf.multi_cell(0, 7, txt=q_text)
+                    pdf.multi_cell(0, 7, text=q_text)
                     pdf.ln(2)
                     
                     # ऑप्शन्स प्रिंट करना (A, B, C, D ब्रैकेट के साथ साफ़ दिखेगा)
                     for o_idx, opt in enumerate(q['options']):
                         opt_line = f"   {chr(65+o_idx)}) {opt}"
-                        pdf.multi_cell(0, 6, txt=opt_line)
+                        pdf.multi_cell(0, 6, text=opt_line)
                         pdf.ln(1)
                     
                     # सही उत्तर
                     correct_letter = chr(65 + q['correct'])
-                    pdf.multi_cell(0, 6, txt=f"   Correct Answer: ({correct_letter})")
+                    pdf.multi_cell(0, 6, text=f"   Correct Answer: ({correct_letter})")
                     pdf.ln(1)
                     
                     # एक्सप्लेनेशन
                     if q.get('explanation'):
-                        pdf.multi_cell(0, 6, txt=f"   Explanation: {q['explanation']}")
+                        pdf.multi_cell(0, 6, text=f"   Explanation: {q['explanation']}")
                         pdf.ln(2)
                         
-                    pdf.ln(4) # हर सवाल के बीच का परफेक्ट स्पेस
+                    pdf.ln(4) # हर सवाल के बीच का स्पेस
                 
                 # इन-मेमोरी पीडीएफ आउटपुट जनरेट करना
                 pdf_bytes = pdf.output()
@@ -958,10 +965,10 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
                     chat_id=query.message.chat_id,
                     document=pdf_buffer,
                     filename=safe_pdf_name,
-                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी व्याकरण बिना किसी त्रुटि के दिखाई देंगे।",
+                    caption=f"📄 <b>यहाँ आपकी प्रिंटेबल क्विज़ की PDF फाइल है!</b>\nअब इसमें अंग्रेजी अक्षर (A, B, C, D) और शुद्ध हिंदी मात्राएं बिना किसी एरर के परफेक्ट दिखेंगी।",
                     parse_mode="HTML"
                 )
-                logging.info(f"✅ Fixed FPDF2 Hindi PDF sent successfully.")
+                logging.info(f"✅ Fixed FPDF2 Hindi PDF with text shaping sent successfully.")
             
         except Exception as pdf_err:
             logging.error(f"❌ PDF Generation Error: {pdf_err}", exc_info=True)
@@ -973,6 +980,7 @@ async def handle_negative_and_finish(update: Update, context: ContextTypes.DEFAU
     except Exception as e:
         logging.error(f"Error in handle_negative_and_finish: {e}", exc_info=True)
         return ConversationHandler.END
+
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Quiz setup processing setup abandoned.", reply_markup=ReplyKeyboardRemove())
